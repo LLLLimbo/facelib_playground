@@ -1,5 +1,6 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgcodecs/imgcodecs.hpp"
+#include <curl/curl.h>
 
 #ifdef WIN32
 #define NOMINMAX
@@ -47,6 +48,7 @@ int gettimeofday(struct timeval *tp, void *tzp)
 #include "lombo.h"
 #include "base64.h"
 #include "faceid.h"
+#include "curl/curl.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,6 +103,28 @@ static recognizer_fl_param_t recognizer_fl_params[] = {
         {"82x", "v2", 7, 1},
         {"82x", "v3", 7, -6},
 };
+
+/*-----------------Customized image reader start-----------------------------*/
+size_t write_data(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    auto *stream = (std::vector<uchar> *) userdata;
+    size_t count = size * nmemb;
+    stream->insert(stream->end(), ptr, ptr + count);
+    return count;
+}
+
+cv::Mat curlImg(const char *img_url, int timeout = 10) {
+    std::vector<uchar> stream;
+    CURL *curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_URL, img_url); //the img url
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data); // pass the writefunction
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream); // pass the stream ptr to the writefunction
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout); // timeout if curl_easy hangs,
+    CURLcode res = curl_easy_perform(curl); // start curl
+    curl_easy_cleanup(curl); // cleanup
+    return cv::imdecode(stream, -1); // 'keep-as-is'
+}
+
+/*-----------------Customized image reader end-----------------------------*/
 
 static void show_support_version_list() {
     int size = sizeof(recognizer_fl_params) / sizeof(recognizer_fl_params[0]);
@@ -410,6 +434,81 @@ std::vector<Data> get_quality(std::string &filename, int *code) {
     //std::cout << "flg2: " << PASS << std::endl;
 
     return dst;
+}
+
+
+std::vector<Data> get_quality(const char *url, int *code) {
+    std::vector<Data> dst;
+    //start = get_systime_us();
+    cv::Mat img = curlImg(url);
+
+    if (img.empty()) {
+        //std::cout << filename << std::endl;
+        *code = IMAGE_INFO_ERR_CODE_IMG_DECODE;
+        return dst;
+    }
+    if (std::min(img.rows, img.cols) < DET_MIN_IMG_PIXEL) {
+        //std::cout << filename << std::endl;
+        *code = IMAGE_INFO_ERR_CODE_SMALL_FACE;
+        return dst;
+    }
+    pthread_mutex_lock(&g_mutex);
+    lombo->set_runner_flags(false, true, false); //reg, post, mask_reg
+    Data result = lombo->run(img);
+    //end = get_systime_us();
+    pthread_mutex_unlock(&g_mutex);
+    //std::cout << filename << std::endl;
+    //result.print();
+    //time = end - start;
+    //std::cout << "run us:" << time << std::endl;
+    if (result.flg == PASS) {
+        if (result.n == 1) {
+            *code = IMAGE_INFO_ERR_CODE_SUCCESS;
+            dst.push_back(result);
+        } else if (result.n > 1) {
+            *code = IMAGE_INFO_ERR_CODE_MULTI_FACE;
+        }
+    } else if (result.flg == NO_FACE) {
+        *code = IMAGE_INFO_ERR_CODE_NO_FACE;
+    }
+    //std::cout << "flg: " << result.flg << std::endl;
+    //std::cout << "flg1: " << result.n << std::endl;
+    //std::cout << "flg2: " << PASS << std::endl;
+
+    return dst;
+}
+
+image_quality_t get_quality_from_url(char *url) {
+    image_quality_t info;
+    memset(&info, 0, sizeof(image_quality_t));
+    std::string image = url;
+    int code = -1;
+    std::vector<Data> result = get_quality(url, &code);
+    info.code = code;
+    if (result.size() == 1) {
+        cv::Mat pose = Lombo::collect_data(result, PROPERTY::POSE);
+        int rows = pose.rows;
+        int cols = pose.cols;
+        for (int i = 0; i < rows; i++) {
+            auto *data = pose.ptr<float>(i);
+            for (int j = 0; j < cols; j++) {
+                //std::cout << "data[j] " << data[j] << std::endl;
+                info.pose[j] = data[j];
+
+            }
+        }
+
+        cv::Mat quality = Lombo::collect_data(result, PROPERTY::QUALITY);
+        rows = quality.rows;
+        cols = quality.cols;
+        for (int i = 0; i < rows; i++) {
+            auto *data = quality.ptr<float>(i);
+            for (int j = 0; j < cols; j++) {
+                info.quality = data[j];
+            }
+        }
+    }
+    return info;
 }
 
 image_quality_t get_quality_from(char *filename) {

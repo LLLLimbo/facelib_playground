@@ -98,6 +98,8 @@ float feature_db_compare_and_norm(int db_index, char *feat);
 * feature_db_register_and_norm  优点：只需要保存一份小机端的特性值， 缺点：注册底库较慢
 */
 
+image_quality_t get_quality_from_url(char *url);
+
 typedef struct reg_feat_s {
 	char feature[1024];
 } reg_feat_t;

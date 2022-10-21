@@ -8,31 +8,30 @@
 #include "nats/nats.h"
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgcodecs/imgcodecs.hpp"
-#include "base64.h"
 
 using json = nlohmann::json;
 json conf;
 
-static void onMsg(natsConnection *nc, natsSubscription *sub, natsMsg *msg, void *closure) {
-    printf("Received msg: %s - %.*s\n",
-           natsMsg_GetSubject(msg),
-           natsMsg_GetDataLength(msg),
-           natsMsg_GetData(msg));
-
+json score(natsMsg *msg) {
     json msg_json = json::parse(natsMsg_GetData(msg));
+    char img;
+    msg_json["img"].get_to(img);
+    image_quality_t quality = get_quality_from_url(&img);
+
+    json result_json;
+    result_json["code"] = quality.code;
+    result_json["quality"] = quality.quality;
+    result_json["pose"] = quality.pose;
+
+    return result_json;
+}
+
+json feature(natsMsg *msg) {
+    json msg_json = json::parse(natsMsg_GetData(msg));
+
     std::string img;
     std::string method;
     msg_json["img"].get_to(img);
-    msg_json["method"].get_to(method);
-
-
-    /*const char *data = natsMsg_GetData(msg);
-    cJSON *json = cJSON_Parse(data);
-    cJSON *img = cJSON_GetObjectItem(json, "img");
-    char *img_str = cJSON_GetStringValue(img);
-    std::string fileName = img_str;
-    char cFileName[fileName.length() + 1];
-    strcpy(cFileName, fileName.c_str());*/
 
     char cFileName[img.length() + 1];
     strcpy(cFileName, img.c_str());
@@ -53,17 +52,33 @@ static void onMsg(natsConnection *nc, natsSubscription *sub, natsMsg *msg, void 
     fwrite(info.feature, 1, 1024, fp);
     fclose(fp);
 
+    json result_json;
+    result_json["code"] = 0;
+    return result_json;
+}
 
-    int len = sizeof(info.feature);
-    char *base64 = (char *) calloc(sizeof(char) * len * 4 / 3 + 4, 1);
-    base64_encode((const unsigned char *) info.feature, len, base64);
+static void onMsg(natsConnection *nc, natsSubscription *sub, natsMsg *msg, void *closure) {
+    printf("Received msg: %s - %.*s\n",
+           natsMsg_GetSubject(msg),
+           natsMsg_GetDataLength(msg),
+           natsMsg_GetData(msg));
 
-    /* cJSON *emp = cJSON_CreateObject();
-     cJSON *res = cJSON_AddStringToObject(emp, "feature", base64);
-     char *str_res = cJSON_Print(res);*/
+    std::string subject = natsMsg_GetSubject(msg);
+    json result_json;
 
+    if (subject == "inf.facelib.score") {
+        result_json = score(msg);
+    }
+    if (subject == "inf.facelib.feature") {
+        result_json = feature(msg);
+    }
+
+
+    auto result_str = to_string(result_json);
     natsConnection_PublishString(nc, natsMsg_GetReply(msg),
-                                 base64);
+                                 result_str.c_str());
+
+    delete &result_json;
     natsMsg_Destroy(msg);
 }
 
