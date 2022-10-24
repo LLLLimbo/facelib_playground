@@ -48,4 +48,4 @@ RUN cmake ..
 RUN make
 RUN mv facelib_playgroundtest ../
 WORKDIR /seeiner/facelib-playground
-CMD ["./facelib_playgroundtest"]
+CMD ["/bin/bash","-c","./facelib_playgroundtest"]
