@@ -113,6 +113,7 @@ size_t write_data(char *ptr, size_t size, size_t nmemb, void *userdata) {
 }
 
 cv::Mat curlImg(const char *img_url, int timeout = 10) {
+    std::cout << "downloading image from: " << img_url << std::endl;
     std::vector<uchar> stream;
     CURL *curl = curl_easy_init();
     curl_easy_setopt(curl, CURLOPT_URL, img_url); //the img url
@@ -285,6 +286,38 @@ std::vector<Data> get_feature(std::string &filename, const bool &use_recognizer,
     return dst;
 }
 
+std::vector<Data> get_feature(const char *url, const bool &use_recognizer, const bool &use_pose_and_quality,
+                              const bool &use_mask_recognizer,
+                              int *code) {
+    std::vector<Data> dst;
+    cv::Mat img = curlImg(url);
+    if (img.empty()) {
+        std::cout << url << std::endl;
+        *code = IMAGE_INFO_ERR_CODE_IMG_DECODE;
+        return dst;
+    }
+    if (std::min(img.rows, img.cols) < DET_MIN_IMG_PIXEL) {
+        std::cout << url << std::endl;
+        *code = IMAGE_INFO_ERR_CODE_SMALL_FACE;
+        return dst;
+    }
+    pthread_mutex_lock(&g_mutex);
+    lombo->set_runner_flags(use_recognizer, use_pose_and_quality, use_mask_recognizer); //reg, post, mask_reg
+    Data result = lombo->run(img);
+    pthread_mutex_unlock(&g_mutex);
+    if (result.flg == PASS) {
+        if (result.n == 1) {
+            *code = IMAGE_INFO_ERR_CODE_SUCCESS;
+            dst.push_back(result);
+        } else if (result.n > 1) {
+            *code = IMAGE_INFO_ERR_CODE_MULTI_FACE;
+        }
+    } else if (result.flg == NO_FACE) {
+        *code = IMAGE_INFO_ERR_CODE_NO_FACE;
+    }
+    return dst;
+}
+
 void gen_features_and_normal(const cv::Mat &embedding, signed char *&features, float *&normal) {
     int array_norm_n = embedding.rows * 2;
     int array_feature_n = embedding.rows * 1024;
@@ -381,6 +414,51 @@ image_info_t get_feature_from(char *filename, bool use_recognizer, bool use_mask
     image_info.err_code = code;
     std::cout << "err_code: " << image_info.err_code << std::endl;
 
+    return image_info;
+}
+
+image_info_t get_feature_from_url(char *url, bool use_recognizer, bool use_mask_recognizer) {
+    image_info_t image_info;
+    memset(&image_info, 0, sizeof(image_info_t));
+    int code = -1;
+    bool _use_recognizer = use_recognizer;
+    bool _use_pose_and_quality = false;
+    bool _use_mask_recognizer = use_mask_recognizer;
+    std::vector<Data> reg_feat_result = get_feature(url, _use_recognizer, _use_pose_and_quality, _use_mask_recognizer,
+                                                    &code);
+    if (reg_feat_result.size() == 1) {
+        signed char *__feature = new signed char[1024]();
+        signed char *__mask_feature = new signed char[1024]();
+        float *__normal = new float[2]();
+        float *__mask_normal = new float[2]();
+        char *feature = image_info.feature;
+        char *mask_feature = image_info.feature + 512;
+        float *norm_feature = image_info.norm_feature;
+
+        cv::Mat register_embeddings = Lombo::collect_data(reg_feat_result, PROPERTY::RECOGNITION_EMBEDDINGS);
+        gen_features_and_normal(register_embeddings, __feature, __normal);
+
+        if (use_mask_recognizer) {
+            cv::Mat mask_register_embeddings = Lombo::collect_data(reg_feat_result,
+                                                                   PROPERTY::MASK_RECOGNITION_EMBEDDINGS);
+            gen_mask_features_and_normal(mask_register_embeddings, __mask_feature, __mask_normal);
+        }
+        image_info.normal[0] = __normal[0];
+        image_info.normal[1] = __mask_normal[0];
+
+        memcpy(feature, __feature, 512);
+        memcpy(mask_feature, __mask_feature, 512);
+
+        Lombo::normalize(register_embeddings);
+        memcpy(norm_feature, (float *) register_embeddings.data, 512 * sizeof(float));
+
+        delete[] __feature;
+        delete[] __mask_feature;
+        delete[] __normal;
+        delete[] __mask_normal;
+    }
+    image_info.err_code = code;
+    std::cout << "err_code: " << image_info.err_code << std::endl;
     return image_info;
 }
 
@@ -881,6 +959,28 @@ int feature_db_compare_and_norm_st(int db_index, char *feat, cmp_result_t *resul
         feature_db_compare_thr_data_st(similarity, db_index, result);
     }
     return 0;
+}
+
+const char *string_to_hex(const char *str, char *hex, size_t maxlen) {
+    static const char *const lut = "0123456789ABCDEF";
+
+    if (str == nullptr) return nullptr;
+    if (hex == nullptr) return nullptr;
+    if (maxlen == 0) return nullptr;
+
+    size_t len = strlen(str);
+
+    char *p = hex;
+
+    for (size_t i = 0; (i < len) && (i < (maxlen - 1)); ++i) {
+        const unsigned char c = str[i];
+        *p++ = lut[c >> 4];
+        *p++ = lut[c & 15];
+    }
+
+    *p++ = 0;
+
+    return hex;
 }
 
 #if 1

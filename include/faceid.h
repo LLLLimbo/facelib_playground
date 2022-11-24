@@ -52,6 +52,7 @@ image_quality_t get_quality_from(char *filename);
 * @return    image_info_t
 */
 image_info_t get_feature_from(char *filename, bool use_recognizer, bool use_mask_recognizer);
+image_info_t get_feature_from_url(char *url, bool use_recognizer, bool use_mask_recognizer);
 
 /*
 * @fn feature_compare
@@ -99,6 +100,8 @@ float feature_db_compare_and_norm(int db_index, char *feat);
 */
 
 image_quality_t get_quality_from_url(char *url);
+
+const char* string_to_hex(const char *str, char *hex, size_t maxlen);
 
 typedef struct reg_feat_s {
 	char feature[1024];

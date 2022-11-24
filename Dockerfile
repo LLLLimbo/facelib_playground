@@ -28,8 +28,7 @@ WORKDIR /seeiner/nats.c/build
 RUN cmake .. -DNATS_BUILD_WITH_TLS=OFF -DNATS_BUILD_STREAMING=OFF
 RUN make install
 RUN cp src/libnats.so /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
-RUN cp src/libnats.so.3.4 /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
-RUN cp src/libnats.so.3.4.1 /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
+RUN cp src/libnats.so.* /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
 
 #install libcurl
 WORKDIR /seeiner
@@ -39,9 +38,7 @@ RUN ./configure --without-ssl --prefix=/seeiner/curl-7.85.0/build
 RUN make
 RUN make install
 RUN cp build/lib/libcurl.so /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
-RUN cp build/lib/libcurl.so.4 /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
-RUN cp build/lib/libcurl.so.4.8.0 /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
-
+RUN cp build/lib/libcurl.so.* /seeiner/facelib-playground/os/cpu/ubuntu18/usr/lib/
 
 WORKDIR /seeiner/facelib-playground/build
 RUN cmake ..

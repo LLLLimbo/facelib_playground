@@ -2,6 +2,8 @@
 #include <mutex>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <csignal>
+#include <unistd.h>
 
 
 #include "faceid.h"
@@ -11,12 +13,17 @@
 
 using json = nlohmann::json;
 json conf;
+static volatile int keepRunning = 1;
 
 json score(natsMsg *msg) {
     json msg_json = json::parse(natsMsg_GetData(msg));
-    char img;
+    std::string img;
     msg_json["img"].get_to(img);
-    image_quality_t quality = get_quality_from_url(&img);
+
+    char *cimg = new char[img.length() + 1];
+    strcpy(cimg, img.c_str());
+
+    image_quality_t quality = get_quality_from_url(cimg);
 
     json result_json;
     result_json["code"] = quality.code;
@@ -28,18 +35,20 @@ json score(natsMsg *msg) {
 
 json feature(natsMsg *msg) {
     json msg_json = json::parse(natsMsg_GetData(msg));
-
+    std::cout << "Received: " << msg_json << std::endl;
     std::string img;
-    std::string method;
     msg_json["img"].get_to(img);
 
-    char cFileName[img.length() + 1];
-    strcpy(cFileName, img.c_str());
+    char *cimg = new char[img.length() + 1];
+    strcpy(cimg, img.c_str());
+
+    /* char cFileName[img.length() + 1];
+     strcpy(cFileName, img.c_str());*/
 
     //Get Info
     bool use_mask_recognizer = false;
     image_info_t info = {0};
-    info = get_feature_from(cFileName, true, use_mask_recognizer);
+    info = get_feature_from_url(cimg, true, use_mask_recognizer);
     if (info.err_code == 0) {
         std::cout << "normal: " << info.normal[0] << std::endl;
         std::cout << "mask_normal: " << info.normal[1] << std::endl;
@@ -47,13 +56,22 @@ json feature(natsMsg *msg) {
     }
     /*char *fName;
     sprintf(fName, "feature_%s_%s.bin", model_type_c, model_ver_c);
-    std::cout << "Export feature to file: " << fName << std::endl;*/
+    std::cout << "Export feature to file: " << fName << std::endl;
     FILE *fp = fopen("feature.bin", "wb+");
     fwrite(info.feature, 1, 1024, fp);
-    fclose(fp);
+    fclose(fp);*/
+
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (char i: info.feature) {
+        ss << std::setw(2) << static_cast<unsigned>(i);
+    }
+    std::string out = ss.str();
 
     json result_json;
-    result_json["code"] = 0;
+    result_json["feature"] = out;
+    result_json["code"] = info.err_code;
+
     return result_json;
 }
 
@@ -80,6 +98,12 @@ static void onMsg(natsConnection *nc, natsSubscription *sub, natsMsg *msg, void 
 
     delete &result_json;
     natsMsg_Destroy(msg);
+}
+
+void sig_handler(int sig) {
+    if (sig == SIGINT) {
+        keepRunning = 0;
+    }
 }
 
 int main() {
@@ -125,17 +149,16 @@ int main() {
     init_model(model_type_c, model_ver_c, use_mask_recognizer);
     std::cout << "Model loaded !" << std::endl;
 
-    int flag;
-    flag = std::cin.get();
-
-    //Exit on flag=0
-    if (flag == 0) {
-        //Close NATS
-        std::cout << "Clear NATS resources!" << std::endl;
-        natsSubscription_Destroy(sub);
-        natsConnection_Destroy(conn);
-        nats_Close();
-        return 0;
+    signal(SIGINT, sig_handler);
+    while (keepRunning) {
+        sleep(1);
     }
+
+    //Close NATS
+    std::cout << "Clear NATS resources!" << std::endl;
+    natsSubscription_Destroy(sub);
+    natsConnection_Destroy(conn);
+    nats_Close();
+
     return 0;
 }
