@@ -95,8 +95,7 @@ static void onMsg(natsConnection *nc, natsSubscription *sub, natsMsg *msg, void 
     auto result_str = to_string(result_json);
     natsConnection_PublishString(nc, natsMsg_GetReply(msg),
                                  result_str.c_str());
-
-    delete &result_json;
+//    delete &result_json;
     natsMsg_Destroy(msg);
 }
 
